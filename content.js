@@ -57,6 +57,10 @@
       const selectedPlayers = allPlayerCards.slice(0, tab.count);
       result.squadByRole[tab.role] = selectedPlayers;
       
+      // 4. Capture the next 15 unselected players to provide exact credits string to AI
+      if (!result.availableByRole) result.availableByRole = {};
+      result.availableByRole[tab.role] = allPlayerCards.slice(tab.count, tab.count + 15);
+      
       console.log(`[IPL FA] ${tab.role}: required ${tab.count}, found ${allPlayerCards.length}, sliced top ${selectedPlayers.length}`);
     }
 
@@ -213,6 +217,19 @@
     
     if (totalFound === 0) {
       summary += "ERROR: Could not find any players. Please make sure the Transfer page is loaded completely.\n";
+    }
+
+    summary += `\n[Top Available Replacements (with Exact Credits)]\n`;
+    summary += `NOTE: Use THESE exact credit values for IN transfers! DO NOT guess or estimate credits for these players.\n`;
+    for (const role of ["WK", "BAT", "AR", "BOWL"]) {
+      const avail = result.availableByRole?.[role] || [];
+      if (avail.length > 0) {
+        summary += `\n--- Available ${role}s ---\n`;
+        for (const p of avail) {
+           // We only need the first 100 chars to avoid prompt bloat, but ensure it captures the credit block
+           summary += `${p.substring(0, 150)}\n`;
+        }
+      }
     }
 
     return summary;
