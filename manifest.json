@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "IPL Fantasy Advisor",
+  "name": "TATA IPL'26 Fantasy Advisor",
   "version": "1.0.0",
   "description": "AI-powered transfer recommendations for TATA IPL Season Long Fantasy 2026. Uses Gemini to analyze your squad and suggest optimal transfers.",
   "permissions": [
@@ -40,6 +40,13 @@
   ],
   "host_permissions": [
     "https://generativelanguage.googleapis.com/*",
-    "*://fantasy.iplt20.com/*"
+    "*://fantasy.iplt20.com/*",
+    "http://localhost:5050/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["players.json"],
+      "matches": ["<all_urls>"]
+    }
   ]
 }

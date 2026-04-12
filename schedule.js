@@ -201,13 +201,111 @@ export function getTeamDensity(days = 14) {
 }
 
 /**
+ * Get the current match number based on today's date
+ * @returns {number} - Current match number (how many matches have been played or are today)
+ */
+export function getCurrentMatchNumber() {
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+  return IPL_2026_SCHEDULE.filter(m => new Date(m.date) <= today).length;
+}
+
+/**
+ * Compute transfer budget status — how aggressively can the user make transfers?
+ * @param {number} transfersRemaining - Transfers left
+ * @param {number} totalTransfers - Total transfer budget (default 120)
+ * @returns {Object} - { burnRate, status, maxRecommended, matchesRemaining, reasoning }
+ */
+export function computeTransferBudget(transfersRemaining, totalTransfers = 120) {
+  const currentMatch = getCurrentMatchNumber();
+  const totalMatches = 74;
+  const matchesRemaining = Math.max(totalMatches - currentMatch, 1);
+
+  const burnRate = transfersRemaining / matchesRemaining;
+  const idealRate = totalTransfers / totalMatches; // ~1.62
+
+  let status, maxRecommended, reasoning;
+
+  if (burnRate >= 2.2) {
+    status = "AGGRESSIVE";
+    maxRecommended = 3;
+    reasoning = `You have ${transfersRemaining} transfers for ${matchesRemaining} matches (${burnRate.toFixed(1)}/match). You can afford 2-3 transfers per match comfortably.`;
+  } else if (burnRate >= 1.5) {
+    status = "NORMAL";
+    maxRecommended = 2;
+    reasoning = `You have ${transfersRemaining} transfers for ${matchesRemaining} matches (${burnRate.toFixed(1)}/match). Stick to 1-2 transfers per match.`;
+  } else if (burnRate >= 1.0) {
+    status = "CAUTIOUS";
+    maxRecommended = 1;
+    reasoning = `You have ${transfersRemaining} transfers for ${matchesRemaining} matches (${burnRate.toFixed(1)}/match). Budget is tight — only make 1 transfer per match unless essential.`;
+  } else {
+    status = "CONSERVATION";
+    maxRecommended = 0;
+    reasoning = `⚠️ CRITICAL: Only ${transfersRemaining} transfers for ${matchesRemaining} matches (${burnRate.toFixed(1)}/match). You are running LOW. Make 0 transfers unless absolutely necessary (e.g., injured player). Every transfer must be high-impact.`;
+  }
+
+  return { burnRate: parseFloat(burnRate.toFixed(2)), status, maxRecommended, matchesRemaining, transfersRemaining, reasoning };
+}
+
+/**
+ * Get team "hold value" — how many matches does this team play in the next N days?
+ * Higher = better to bring in (player stays productive longer)
+ * @param {string} teamAbbr
+ * @param {number} days - Lookahead window (default 10)
+ * @returns {Object} - { matches, dates, opponents, holdScore }
+ */
+export function getTeamHoldValue(teamAbbr, days = 10) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const cutoff = new Date(today);
+  cutoff.setDate(cutoff.getDate() + days);
+  const team = teamAbbr.toUpperCase();
+
+  const upcomingInWindow = IPL_2026_SCHEDULE.filter(m => {
+    const d = new Date(m.date);
+    return (m.team1 === team || m.team2 === team) && d >= today && d <= cutoff;
+  });
+
+  const matches = upcomingInWindow.length;
+  const details = upcomingInWindow.map(m => ({
+    date: m.date,
+    opponent: m.team1 === team ? m.team2 : m.team1,
+    venue: m.venue.split(",")[0],
+  }));
+
+  // Hold score: 3+ matches = great, 2 = decent, 1 = poor, 0 = avoid
+  let holdScore;
+  if (matches >= 3) holdScore = "🟢 EXCELLENT";
+  else if (matches === 2) holdScore = "🟡 DECENT";
+  else if (matches === 1) holdScore = "🟠 POOR";
+  else holdScore = "🔴 AVOID";
+
+  return { matches, details, holdScore };
+}
+
+/**
+ * Get all teams' hold values as a summary
+ * @param {number} days - Lookahead window
+ * @returns {Object} - { CSK: { matches, holdScore, ... }, ... }
+ */
+export function getAllTeamHoldValues(days = 10) {
+  const result = {};
+  for (const team of Object.keys(TEAM_NAMES)) {
+    result[team] = getTeamHoldValue(team, days);
+  }
+  return result;
+}
+
+/**
  * Build a comprehensive schedule context string for Gemini prompt
+ * @param {Object} squadMeta - Optional squad metadata with transfersRemaining
  * @returns {string}
  */
-export function buildScheduleContext() {
+export function buildScheduleContext(squadMeta = null) {
   const upcoming = getUpcomingMatches(12);
   const gaps = getMatchGaps();
   const density = getTeamDensity(14);
+  const holdValues = getAllTeamHoldValues(10);
 
   let context = "=== UPCOMING IPL 2026 MATCHES (next 12) ===\n";
   for (const m of upcoming) {
@@ -228,14 +326,33 @@ export function buildScheduleContext() {
     context += `${team}: ${count} matches in 14 days ${count >= 4 ? "🔥 DENSE" : count >= 3 ? "✅ Good" : "⚠️ Sparse"}\n`;
   }
 
+  // Add hold values — how many matches in the next 10 days
+  context += "\n=== TEAM HOLD VALUE (matches in next 10 days — higher = better to bring in) ===\n";
+  const sortedHold = Object.entries(holdValues).sort((a, b) => b[1].matches - a[1].matches);
+  for (const [team, data] of sortedHold) {
+    let details = "";
+    if (data.details.length > 0) {
+      details = " → " + data.details.map(d => `${d.date} vs ${d.opponent} (${d.venue})`).join(", ");
+    }
+    context += `${team}: ${data.matches} matches ${data.holdScore}${details}\n`;
+  }
+
   // Add venue profiles for upcoming matches
   context += "\n=== VENUE INSIGHTS FOR UPCOMING MATCHES ===\n";
   const upcomingVenues = [...new Set(upcoming.map(m => m.venue))];
   for (const venue of upcomingVenues) {
     const profile = VENUE_PROFILES[venue];
     if (profile) {
-      context += `${venue}: ${profile.notes} | Avg Score: ${profile.avg_score} | Type: ${profile.type}\n`;
+      context += `${venue}: ${profile.notes} | Avg Score: ${profile.avg_score} | Type: ${profile.type} | Dew: ${profile.dew_factor}\n`;
     }
+  }
+
+  // Add transfer budget if provided
+  if (squadMeta?.transfersRemaining) {
+    const budget = computeTransferBudget(squadMeta.transfersRemaining, squadMeta.transfersMax || 120);
+    context += `\n=== TRANSFER BUDGET STATUS ===\n`;
+    context += `${budget.reasoning}\n`;
+    context += `Budget Status: ${budget.status} | Max Recommended This Match: ${budget.maxRecommended} transfers\n`;
   }
 
   return context;

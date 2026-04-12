@@ -57,11 +57,11 @@
       const selectedPlayers = allPlayerCards.slice(0, tab.count);
       result.squadByRole[tab.role] = selectedPlayers;
       
-      // 4. Capture the next 15 unselected players to provide exact credits string to AI
+      // 4. Capture all remaining unselected players (that are currently loaded in the DOM)
       if (!result.availableByRole) result.availableByRole = {};
-      result.availableByRole[tab.role] = allPlayerCards.slice(tab.count, tab.count + 15);
+      result.availableByRole[tab.role] = allPlayerCards.slice(tab.count);
       
-      console.log(`[IPL FA] ${tab.role}: required ${tab.count}, found ${allPlayerCards.length}, sliced top ${selectedPlayers.length}`);
+      console.log(`[IPL FA] ${tab.role}: required ${tab.count}, found ${allPlayerCards.length}, sliced top ${selectedPlayers.length}. Captured ${result.availableByRole[tab.role].length} available replacements.`);
     }
 
     result.squadSummary = buildSquadSummary(result);

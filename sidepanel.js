@@ -38,6 +38,7 @@
     modalToggleKey: $("#modalToggleKey"),
     modalSaveKey: $("#modalSaveKey"),
     analyzeBtn: $("#analyzeBtn"),
+    dumpBtn: $("#dumpBtn"),
     loadingState: $("#loadingState"),
     loadingTitle: $("#loadingTitle"),
     loadingSubtitle: $("#loadingSubtitle"),
@@ -89,6 +90,7 @@
 
     // Analysis
     els.analyzeBtn.addEventListener("click", handleAnalyze);
+    els.dumpBtn.addEventListener("click", handleDump);
 
     // Chat
     els.chatSendBtn.addEventListener("click", handleChatSend);
@@ -179,6 +181,7 @@
 
     // Reset UI
     els.analyzeBtn.classList.add("hidden");
+    els.dumpBtn?.classList.add("hidden");
     $(".action-hint")?.classList.add("hidden");
     els.loadingState.classList.remove("hidden");
     els.resultsSection.classList.add("hidden");
@@ -283,6 +286,96 @@
       state.isLoading = false;
       els.loadingState.classList.add("hidden");
       els.analyzeBtn.classList.remove("hidden");
+      els.dumpBtn?.classList.remove("hidden");
+      $(".action-hint")?.classList.remove("hidden");
+    }
+  }
+
+  async function handleDump() {
+    if (state.isLoading) return;
+    state.isLoading = true;
+
+    // Reset UI
+    els.analyzeBtn.classList.add("hidden");
+    els.dumpBtn?.classList.add("hidden");
+    $(".action-hint")?.classList.add("hidden");
+    els.loadingState.classList.remove("hidden");
+    els.resultsSection.classList.add("hidden");
+    els.chatSection.classList.add("hidden");
+    els.squadSummary.classList.add("hidden");
+
+    // Reset steps
+    setStepState(1, "active");
+    setStepState(2, "pending");
+    setStepState(3, "pending");
+    updateLoading("Scraping your squad...", "Reading player data for backup");
+
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+      if (!tab || !tab.url?.includes("fantasy.iplt20.com")) {
+        throw new Error("Please navigate to fantasy.iplt20.com/classic/transferteam first");
+      }
+
+      // Step 1: Scrape squad data
+      let squadData;
+      try {
+        const scrapeResponse = await sendTabMessage(tab.id, { action: "scrapeAllTabs" });
+        squadData = scrapeResponse.data;
+      } catch (e) {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ["content.js"],
+          });
+          await sleep(600);
+          const scrapeResponse = await sendTabMessage(tab.id, { action: "scrapeAllTabs" });
+          squadData = scrapeResponse.data;
+        } catch (e2) {
+          try {
+            const textResponse = await sendTabMessage(tab.id, { action: "getPageText" });
+            squadData = { meta: {}, squad: [], pageText: textResponse.text, scrapedAt: new Date().toISOString() };
+          } catch (e3) {
+            throw new Error("Cannot access the fantasy page. Please refresh the transfer team page.");
+          }
+        }
+      }
+
+      setStepState(1, "done");
+      if (squadData.meta) updateSquadSummary(squadData.meta);
+
+      // Step 2: Saving to logger
+      setStepState(2, "active");
+      updateLoading("Saving tracking data...", "Sending to local python logger on port 5050");
+      
+      await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({ type: "DUMP_DATA", squadData }, (response) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else if (response?.success) {
+            resolve();
+          } else {
+            reject(new Error(response?.error || "Local logger isn't running on port 5050"));
+          }
+        });
+      });
+
+      setStepState(2, "done");
+      setStepState(3, "done");
+      
+      // Briefly show success
+      updateLoading("Success!", "Data dumped cleanly to your project folder.");
+      await sleep(1500);
+
+    } catch (error) {
+      console.error("[IPL Fantasy Advisor] Dump error:", error);
+      renderError(error.message);
+      els.resultsSection.classList.remove("hidden");
+    } finally {
+      state.isLoading = false;
+      els.loadingState.classList.add("hidden");
+      els.analyzeBtn.classList.remove("hidden");
+      els.dumpBtn?.classList.remove("hidden");
       $(".action-hint")?.classList.remove("hidden");
     }
   }
