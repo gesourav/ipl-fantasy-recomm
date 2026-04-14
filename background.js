@@ -74,11 +74,6 @@ async function callGemini(prompt, conversationHistory = []) {
       topK: 30,
       maxOutputTokens: 12000,
     },
-    tools: [
-      {
-        googleSearch: {}
-      }
-    ],
     systemInstruction: {
       parts: [{
         text: buildSystemPrompt(),
@@ -99,10 +94,25 @@ async function callGemini(prompt, conversationHistory = []) {
   }
 
   const data = await response.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+  // Robustly extract text — scan all candidates and all parts for text content
+  // (avoids failures when the model returns tool-call parts before the text part)
+  let text = null;
+  for (const candidate of data?.candidates ?? []) {
+    for (const part of candidate?.content?.parts ?? []) {
+      if (part?.text) {
+        text = part.text;
+        break;
+      }
+    }
+    if (text) break;
+  }
 
   if (!text) {
-    throw new Error("Empty response from Gemini");
+    // Surface a more helpful diagnostic message
+    const finishReason = data?.candidates?.[0]?.finishReason ?? "unknown";
+    const promptFeedback = data?.promptFeedbackblocked ? " (prompt blocked)" : "";
+    throw new Error(`Empty response from Gemini (finish reason: ${finishReason}${promptFeedback})`);
   }
 
   return text;
@@ -121,7 +131,7 @@ You are advising a serious fantasy player who treats this like a strategic inves
 2. The "plays after X matches" info from the page is the GROUND TRUTH for scheduling.
 3. Only recommend removing players CONFIRMED in the user's current squad (listed under Confirmed 11 Players).
 4. Only recommend adding players who are CURRENTLY playing in IPL 2026.
-5. You are connected to Google Search — use it to find IPL 2026 match results, pitch conditions, recent form, and live details. Do NOT say "Without specific venue information..." — search it!
+5. Use your training knowledge of IPL 2026 to reason about match results, pitch conditions, and player form. Trust the squad data from the page over any pre-training knowledge about team assignments.
 
 ═══════════════════════════════════════
 █ SECTION 2: FANTASY SCORING SYSTEM
