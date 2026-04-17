@@ -33,7 +33,13 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
 // ============ GEMINI API ============
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+// Ranked list of models to try — primary first, then fallbacks
+const GEMINI_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-3.1-flash-lite-preview",
+  "gemini-2.0-flash",
+  "gemini-3-flash-preview",
+];
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
 async function getApiKey() {
@@ -41,30 +47,41 @@ async function getApiKey() {
   return result.gemini_api_key || null;
 }
 
+/** Returns true for transient server-side errors that are worth retrying */
+function isRetryableError(status, message) {
+  if (status === 429 || status === 503 || status === 500 || status === 502 || status === 504) return true;
+  if (message && (
+    message.includes("high demand") ||
+    message.includes("overloaded") ||
+    message.includes("temporarily unavailable") ||
+    message.includes("Try again") ||
+    message.includes("retry")
+  )) return true;
+  return false;
+}
+
+/** Sleep for ms milliseconds */
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Call the Gemini API with automatic retry (exponential backoff) and
+ * model fallback. Tries each model up to MAX_RETRIES times before
+ * moving on to the next model in GEMINI_MODELS.
+ */
 async function callGemini(prompt, conversationHistory = []) {
   const apiKey = await getApiKey();
   if (!apiKey) {
     throw new Error("GEMINI_API_KEY_NOT_SET");
   }
 
-  const url = `${GEMINI_BASE_URL}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
-
-  // Build contents array with conversation history
+  // Build contents array (shared across all model attempts)
   const contents = [];
-
-  // Add conversation history
   for (const msg of conversationHistory) {
-    contents.push({
-      role: msg.role, // "user" or "model"
-      parts: [{ text: msg.text }],
-    });
+    contents.push({ role: msg.role, parts: [{ text: msg.text }] });
   }
-
-  // Add current prompt
-  contents.push({
-    role: "user",
-    parts: [{ text: prompt }],
-  });
+  contents.push({ role: "user", parts: [{ text: prompt }] });
 
   const body = {
     contents,
@@ -75,47 +92,78 @@ async function callGemini(prompt, conversationHistory = []) {
       maxOutputTokens: 12000,
     },
     systemInstruction: {
-      parts: [{
-        text: buildSystemPrompt(),
-      }],
+      parts: [{ text: buildSystemPrompt() }],
     },
   };
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const MAX_RETRIES = 3;
+  const BASE_DELAY_MS = 2000; // 2 s, doubles each retry
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    const errorMsg = errorData?.error?.message || `HTTP ${response.status}`;
-    throw new Error(`Gemini API error: ${errorMsg}`);
-  }
+  let lastError = null;
 
-  const data = await response.json();
+  for (const model of GEMINI_MODELS) {
+    const url = `${GEMINI_BASE_URL}/${model}:generateContent?key=${apiKey}`;
+    console.log(`[IPL Fantasy Advisor] Trying model: ${model}`);
 
-  // Robustly extract text — scan all candidates and all parts for text content
-  // (avoids failures when the model returns tool-call parts before the text part)
-  let text = null;
-  for (const candidate of data?.candidates ?? []) {
-    for (const part of candidate?.content?.parts ?? []) {
-      if (part?.text) {
-        text = part.text;
-        break;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          const errorMsg = errorData?.error?.message || `HTTP ${response.status}`;
+
+          if (isRetryableError(response.status, errorMsg)) {
+            lastError = new Error(`Gemini API error: ${errorMsg}`);
+            const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+            console.warn(`[IPL FA] Model ${model} attempt ${attempt} failed (retryable): ${errorMsg}. Waiting ${delay}ms…`);
+            await sleep(delay);
+            continue; // retry same model
+          }
+
+          // Non-retryable error for this model — skip to next model
+          lastError = new Error(`Gemini API error: ${errorMsg}`);
+          console.warn(`[IPL FA] Model ${model} non-retryable error: ${errorMsg}. Trying next model…`);
+          break;
+        }
+
+        const data = await response.json();
+
+        // Robustly extract text across all candidates and parts
+        let text = null;
+        for (const candidate of data?.candidates ?? []) {
+          for (const part of candidate?.content?.parts ?? []) {
+            if (part?.text) { text = part.text; break; }
+          }
+          if (text) break;
+        }
+
+        if (!text) {
+          const finishReason = data?.candidates?.[0]?.finishReason ?? "unknown";
+          const promptFeedback = data?.promptFeedback?.blockReason ? " (prompt blocked)" : "";
+          lastError = new Error(`Empty response from Gemini (finish reason: ${finishReason}${promptFeedback})`);
+          console.warn(`[IPL FA] Model ${model} empty response. Trying next model…`);
+          break; // try next model
+        }
+
+        console.log(`[IPL Fantasy Advisor] Success with model: ${model} (attempt ${attempt})`);
+        return text;
+
+      } catch (networkErr) {
+        lastError = networkErr;
+        const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+        console.warn(`[IPL FA] Network error on ${model} attempt ${attempt}: ${networkErr.message}. Waiting ${delay}ms…`);
+        await sleep(delay);
       }
     }
-    if (text) break;
   }
 
-  if (!text) {
-    // Surface a more helpful diagnostic message
-    const finishReason = data?.candidates?.[0]?.finishReason ?? "unknown";
-    const promptFeedback = data?.promptFeedbackblocked ? " (prompt blocked)" : "";
-    throw new Error(`Empty response from Gemini (finish reason: ${finishReason}${promptFeedback})`);
-  }
-
-  return text;
+  // All models exhausted
+  throw lastError || new Error("All Gemini models failed. Please try again later.");
 }
 
 function buildSystemPrompt() {
