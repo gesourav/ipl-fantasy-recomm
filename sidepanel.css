@@ -589,6 +589,7 @@ a:hover {
   font-size: 13px;
   line-height: 1.7;
   color: var(--text-primary);
+  white-space: pre-wrap;
 }
 
 /* Markdown rendering styles */
@@ -619,6 +620,19 @@ a:hover {
 .analysis-content h3 {
   font-size: 13px;
   color: var(--accent-gold);
+}
+
+.analysis-content h4 {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-left: 2px solid var(--accent-blue);
+  padding-left: var(--space-sm);
+  margin: var(--space-md) 0;
+  background: rgba(67, 97, 238, 0.03);
+  padding-top: 4px;
+  padding-bottom: 4px;
 }
 
 .analysis-content p {

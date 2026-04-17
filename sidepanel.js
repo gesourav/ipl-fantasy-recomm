@@ -532,61 +532,60 @@
 
     let html = escapeHtml(text);
 
+    // 1. Pre-process blocks (headers, lists, tables)
     // Code blocks (triple backtick)
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
       return `<pre><code class="language-${lang}">${code.trim()}</code></pre>`;
     });
 
-    // Inline code
+    // 2. Headings (must be at start of line)
+    html = html.replace(/^### (.*$)/gm, "<h3>$1</h3>");
+    html = html.replace(/^## (.*$)/gm, "<h2>$1</h2>");
+    html = html.replace(/^# (.*$)/gm, "<h1>$1</h1>");
+
+    // 3. Bold headers often used in fantasy advice (e.g., "**Match Preview**")
+    // If a line starts with bold text followed by a newline or colon, treat it as a header-ish
+    html = html.replace(/^\*\*(.*)\*\*$/gm, "<h4>$1</h4>");
+
+    // 4. Formatting
+    html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
     html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
 
-    // Headers
-    html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
-    html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
-    html = html.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+    // 5. Lists
+    // Unordered
+    html = html.replace(/^(\s*)[*\-] (.+)$/gm, "<li>$2</li>");
+    // Emoji-led lines often used for status (🔴, 🟢, 💰, etc.)
+    // We treat these as list items if they are at the start of a line
+    html = html.replace(/^([🔴🟢💰⚡🏏📅👑📊🔄🎯🏟️]\s*.+)$/gm, "<li>$1</li>");
+    
+    // Wrap consecutive <li> into <ul>
+    html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>");
 
-    // Bold
-    html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    // 6. Paragraphs and Line Breaks
+    // Split into intentional blocks (tags we've already created)
+    const blocks = html.split(/(\n\n|<(?:h[1-6]|pre|ul|ol|table|blockquote|hr))/);
+    
+    let result = "";
+    for (let i = 0; i < blocks.length; i++) {
+      let block = blocks[i].trim();
+      if (!block) continue;
 
-    // Italic
-    html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+      // If it's a tag we already rendered, just add it
+      if (block.startsWith("<")) {
+        // Find the full tag block if it was split
+        result += block;
+        continue;
+      }
 
-    // Horizontal rules
-    html = html.replace(/^---$/gm, "<hr>");
+      // If it's a separator, skip
+      if (block === "\n\n") continue;
 
-    // Blockquotes
-    html = html.replace(/^&gt; (.+)$/gm, "<blockquote>$1</blockquote>");
+      // Otherwise, it's a regular text block -> wrap in <p> and handle single newlines
+      result += `<p>${block.replace(/\n/g, "<br>")}</p>`;
+    }
 
-    // Tables
-    html = renderTables(html);
-
-    // Unordered lists
-    html = html.replace(/^(\s*)[*\-] (.+)$/gm, (match, indent, content) => {
-      return `<li>${content}</li>`;
-    });
-
-    // Wrap consecutive <li> elements in <ul>
-    html = html.replace(/((?:<li>.*<\/li>\s*)+)/g, "<ul>$1</ul>");
-
-    // Ordered lists
-    html = html.replace(/^\d+\. (.+)$/gm, "<li>$1</li>");
-
-    // Line breaks — convert double newlines to paragraphs
-    html = html
-      .split("\n\n")
-      .map(block => {
-        block = block.trim();
-        if (!block) return "";
-        if (block.startsWith("<h") || block.startsWith("<ul") || block.startsWith("<ol") ||
-            block.startsWith("<pre") || block.startsWith("<blockquote") || block.startsWith("<hr") ||
-            block.startsWith("<table") || block.startsWith("<div")) {
-          return block;
-        }
-        return `<p>${block.replace(/\n/g, "<br>")}</p>`;
-      })
-      .join("\n");
-
-    return html;
+    return result;
   }
 
   function renderTables(html) {
