@@ -1,40 +1,149 @@
-# IPL Fantasy Advisor
+# TATA IPL '26 Fantasy Advisor
 
-> AI-powered transfer recommendations for TATA IPL Season Long Fantasy 2026
+> A Chrome extension that delivers AI-powered transfer recommendations for the [TATA IPL Season Long Fantasy 2026](https://fantasy.iplt20.com) game.
 
-IPL Fantasy Advisor is a smart tool designed to help you optimize your TATA IPL Season Long Fantasy team. Powered by Google's Gemini, it analyzes your existing squad, credits, transfers left, and upcoming fixtures to provide intelligent, forward-looking transfer recommendations.
+[![Manifest Version](https://img.shields.io/badge/Manifest-V3-blue)](https://developer.chrome.com/docs/extensions/mv3/intro/)
+[![AI Model](https://img.shields.io/badge/AI-Gemini%202.5%20Flash-orange)](https://ai.google.dev/)
+[![License](https://img.shields.io/badge/License-MIT-green)](#license)
 
-## 🌟 Features
+<br>
 
-- **Automated Squad Analysis**: Seamlessly scrapes your current squad structure, available credits, remaining transfers, and overseas player limits directly from the fantasy page.
-- **AI-Powered Recommendations**: Utilizes Gemini AI to suggest the most optimal transfers, considering player form, venue statistics, and upcoming fixture density.
-- **Interactive Follow-up Chat**: Not sure about a recommendation? Use the built-in chat interface to ask follow-up questions like *"What if I keep Virat Kohli instead?"* or *"Who is a better captaincy pick for today?"*
-- **Beautiful Side Panel UX**: Features a modern, non-intrusive side panel interface with dynamic loading animations, detailed squad summaries, and elegant typography.
+![Product Screenshot](dumps/product_pic.png)
 
-## 📸 Screenshots
+---
 
-*(Placeholders for screenshots of the extension in action.)*
+## Overview
 
-### 1. Main Dashboard & Squad Summary
-> `[Insert Screenshot Here: View of the extension side panel showing your credits, transfers, and the "Analyze My Squad" button]`
+Managing a fantasy cricket squad across a 74-match season is hard. This extension sits inside your browser as a side panel, scrapes your current squad directly from the IPL Fantasy Transfer page, and asks Google Gemini to reason through your best transfers — factoring in upcoming fixtures, player form, credit budget, and fantasy scoring rules.
 
-### 2. AI Transfer Recommendations
-> `[Insert Screenshot Here: View of the detailed AI-generated transfer strategy containing suggested INs and OUTs]`
+The result: a concise, actionable recommendation you can act on before each match deadline.
 
-### 3. Interactive Follow-up Chat
-> `[Insert Screenshot Here: View of the chat section where the user asks a follow-up question and the AI responds]`
+---
 
-## 🚀 Usage
+## Features
 
-1. Open the **IPL Fantasy Advisor** from your tools menu to launch the side panel.
-2. Enter your **Google Gemini API Key** during the first setup (Securely stored locally).
-3. Navigate to the **Transfer** page on `fantasy.iplt20.com`.
-4. Click the **"Analyze My Squad"** button in the side panel.
-5. Review the AI's custom transfer strategy.
-6. Use the **Chat Section** at the bottom of the panel if you have any follow-up questions or want alternative scenarios evaluated.
+- **Automated squad scraping** — reads your current squad and available replacements directly from the Transfer page; no manual data entry
+- **AI-powered transfer advice** — Gemini analyses fixture density, batting exposure, bowling phase coverage, and credit economics to recommend optimal transfers
+- **Captain & vice-captain guidance** — weekly captaincy picks with reasoning
+- **Interactive follow-up chat** — ask hypothetical questions ("what if I bring in X?") using the same conversation context
+- **Squad health summary** — at-a-glance stats (credits remaining, transfers used, overseas count)
+- **Resilient API calls** — automatic retry with exponential backoff; multi-model fallback if the primary model is unavailable
+- **Optional local data logger** — captures every squad snapshot as a timestamped JSON file for tracking and debugging
 
-## 🛠️ Technology Stack
+---
 
-- **Extension:** Manifest V3, Service Workers, Content Scripts
-- **UI/UX:** HTML5, CSS3 (Custom properties, Flexbox, Animations), Vanilla JS
-- **AI Integration:** Google Gemini API (Gemini 2.5 Pro)
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Extension platform | Chrome Manifest V3 (Service Worker, Content Scripts, Side Panel) |
+| UI | Vanilla HTML / CSS / JavaScript |
+| AI | Google Gemini 2.5 Flash (with fallback chain) |
+| Data | Static `players.json` + hardcoded 2026 schedule |
+| Optional tooling | Python 3 (local debug logger) |
+
+---
+
+## Installation
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/gesourav/ipl-fantasy-recomm.git
+cd ipl-fantasy
+```
+
+### 2. Load the unpacked extension in Chrome
+
+1. Open `chrome://extensions` in your browser.
+2. Enable **Developer mode** (toggle in the top-right corner).
+3. Click **Load unpacked** and select the project directory.
+
+The extension icon will appear in your Chrome toolbar.
+
+### 3. Add your Gemini API key
+
+1. Click the extension icon — the side panel opens.
+2. Paste your API key into the **Setup Gemini API Key** field.
+3. Click **Save & Start**.
+
+The key is stored in `chrome.storage.local` and persists across browser sessions.
+
+---
+
+## Usage
+
+1. Navigate to `fantasy.iplt20.com` and open the **Transfer** page.
+2. Click the extension icon to open the side panel.
+3. Click **Analyze My Squad**.
+   - The extension scrapes your squad from the active tab.
+   - The data is sent to Gemini along with player intelligence and fixture context.
+   - Recommendations appear in the results panel within seconds.
+4. Use the **chat input** at the bottom to ask follow-up questions.
+
+---
+
+## Architecture
+
+```
+Browser Tab (fantasy.iplt20.com)
+        │  content.js scrapes Transfer page UI
+        ▼
+ background.js (Service Worker)
+        │  builds prompt with squad + players.json + schedule.js context
+        │  calls Gemini API (2.5 Flash → fallback chain)
+        ▼
+   Gemini API
+        │  returns markdown recommendation
+        ▼
+  sidepanel.js
+        │  renders result + enables follow-up chat
+        ▼
+      User
+```
+
+**Retry strategy:** failed Gemini calls are retried up to 3 times with exponential backoff (2 s → 4 s → 8 s). If the primary model (`gemini-2.5-flash`) remains unavailable, the extension automatically falls back through `gemini-2.0-flash` and two preview models.
+
+---
+
+## Configuration
+
+| Setting | Where | Notes |
+|---|---|---|
+| Gemini API key | Chrome local storage (via side panel) | Requires a key starting with `AIza` |
+| Primary AI model | `background.js` | Change the `MODEL_CHAIN` array to prefer a different model |
+| Player data | `players.json` | Update `playing_status` and notes as the season progresses |
+| Fixture schedule | `schedule.js` | Hardcoded for IPL 2026 (March 28 – May 24) |
+
+---
+
+## Updating Player Data
+
+Player availability changes frequently during the season. To keep recommendations accurate:
+
+1. Edit `players.json` and set `"playing_status": "not considered"` for injured or dropped players.
+2. Update the `"notes"` field with current form context.
+3. Reload the extension at `chrome://extensions` (click the refresh icon on the extension card).
+
+No rebuild is needed — the extension reads `players.json` at runtime via `import`.
+
+---
+
+## Demo
+
+![Product Demo](dumps/product_demo.gif)
+
+---
+
+## Known Limitations
+
+- Works only on the **Transfer** page of `fantasy.iplt20.com`; the scraper depends on that page's DOM structure.
+- Player intelligence (`players.json`) must be maintained manually — there is no automated sync with live data sources.
+- Gemini API usage is subject to [Google AI Studio free-tier rate limits].
+- The extension is not published to the Chrome Web Store and must be loaded as an unpacked extension.
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE). It is an independent, unofficial tool built for an Assignment of EAG V3 course by TSAI, and is not affiliated with or endorsed by the BCCI, IPL, or the official TATA IPL Fantasy platform.

@@ -1,4 +1,5 @@
 .env
 .assets/
 instructions.txt
-/dumps
+dumps/player_status_20260412_093259.json
+.DS_Store
